@@ -44,7 +44,7 @@ The **Nolan** project consists of two core components:
 - **Custom Modern Theme**:
   - Custom emerald dark theme for Dear ImGui with real-time UI loading indicators.
 
-  <video src="./res/record_000.mp4" controls width="800"></video>
+  <video src="./res/demo.gif" controls width="800"></video>
 
 ---
 
