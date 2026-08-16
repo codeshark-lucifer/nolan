@@ -23,3 +23,11 @@ add_custom_command(TARGET application POST_BUILD
         $<TARGET_FILE:olia>
         $<TARGET_FILE_DIR:application>
 )
+
+if(WIN32)
+    target_link_options(application PRIVATE
+        -static
+        -static-libgcc
+        -static-libstdc++
+    )
+endif()

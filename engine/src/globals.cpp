@@ -37,12 +37,8 @@ namespace OLIA_ENGINE
             return false;
         }
 
-        SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-
-        if (desc.vulkan)
-        {
-            flags |= SDL_WINDOW_VULKAN;
-        }
+        SDL_WindowFlags flags = (SDL_WindowFlags)((desc.vulkan ? SDL_WINDOW_VULKAN : 0) |
+                                                  (desc.resizable ? SDL_WINDOW_RESIZABLE : 0));
 
         m_window = SDL_CreateWindow(
             desc.app_name,
