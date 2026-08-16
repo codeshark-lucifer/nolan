@@ -1,0 +1,85 @@
+#version 450
+
+struct Particle {
+    vec4 pos;   // xyz: position, w: current life
+    vec4 vel;   // xyz: velocity, w: maxLife
+    vec4 color; // rgba
+};
+
+layout(std430, binding = 0) buffer ParticleBuffer {
+    Particle particles[];
+};
+
+layout(push_constant) uniform PushConstants {
+    float deltaTime;
+    float totalTime;
+    float startSpeed;
+    float gravity;
+    float swirlSpeed;
+    float emitterRadius;
+    float startLifetime;
+    float padding;
+    vec4 startColor;
+    vec4 endColor;
+} params;
+
+// Fast GPU pseudo-random generator
+float rand(vec2 co) {
+    return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= particles.length()) return;
+
+    Particle p = particles[idx];
+
+    // Decrement Life
+    p.pos.w -= params.deltaTime;
+
+    // Respawn dead particles
+    if (p.pos.w <= 0.0) {
+        float r1 = rand(vec2(idx, params.totalTime));
+        float r2 = rand(vec2(params.totalTime, idx));
+        float r3 = rand(vec2(idx * 0.13, params.totalTime * 0.7));
+
+        // Ring Emitter
+        float angle = r1 * 6.28318530718;
+        float radius = sqrt(r2) * params.emitterRadius;
+
+        p.pos.x = cos(angle) * radius;
+        p.pos.y = (r3 - 0.5) * 0.2; // Slight vertical jitter
+        p.pos.z = sin(angle) * radius;
+        p.pos.w = params.startLifetime * (0.7 + 0.6 * r3); // Randomized life variance
+
+        p.vel.w = p.pos.w; // Store maxLife in vel.w
+
+        // Initial launch direction (Radial outward + Upward)
+        vec3 dir = normalize(vec3(cos(angle) * 0.5, 1.0, sin(angle) * 0.5));
+        p.vel.xyz = dir * params.startSpeed * (0.8 + 0.4 * r1);
+    } else {
+        // Physics update
+        float lifeRatio = 1.0 - (p.pos.w / p.vel.w); // 0.0 at spawn -> 1.0 at death
+
+        // Swirling force around Y-axis
+        vec2 posXZ = p.pos.xz;
+        vec2 swirlDir = vec2(-posXZ.y, posXZ.x);
+        if (length(swirlDir) > 0.001) {
+            swirlDir = normalize(swirlDir);
+        }
+
+        // Apply angular acceleration + gravity
+        p.vel.xz += swirlDir * params.swirlSpeed * params.deltaTime;
+        p.vel.y -= params.gravity * params.deltaTime;
+
+        // Apply velocity to position
+        p.pos.xyz += p.vel.xyz * params.deltaTime;
+
+        // Smooth Color Gradient Interpolation over lifetime
+        p.color = mix(params.startColor, params.endColor, lifeRatio);
+    }
+
+    particles[idx] = p;
+}

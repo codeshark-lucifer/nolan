@@ -1,0 +1,84 @@
+# ========================================
+# Build
+# ========================================
+build/
+out/
+bin/
+obj/
+cmake-build-*/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+install_manifest.txt
+
+# Visual Studio
+.vs/
+*.VC.db
+*.VC.opendb
+*.sln.docstates
+
+# Visual Studio Build
+Debug/
+Release/
+x64/
+x86/
+
+# Visual Studio Project User Files
+*.vcxproj.user
+*.vcxproj.filters
+*.VC.db
+
+# VS Code
+.vscode/
+
+# CLion
+.idea/
+
+# macOS
+.DS_Store
+
+# Linux
+*.swp
+*.swo
+
+# Executables
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+
+# Object Files
+*.obj
+*.o
+*.a
+*.lib
+*.exp
+*.pdb
+*.ilk
+
+# Logs
+*.log
+
+# Cache
+.cache/
+
+# Generated Assets
+*.tmp
+
+compile.bat
+
+# ========================================
+# Don't ignore assets
+# ========================================
+!assets/
+!engine/
+!game/
+!vendor/
+!thirdparty/
+!CMakeLists.txt
