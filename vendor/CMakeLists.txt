@@ -15,6 +15,7 @@ find_package(OpenSSL QUIET)
 add_subdirectory(freetype)
 add_subdirectory(harfbuzz)
 add_subdirectory(SDL)
+
 add_subdirectory(vulkan)
 add_subdirectory(glm)
 add_subdirectory(stb)
@@ -36,8 +37,8 @@ set(IMGUI_SOURCES
 )
 
 add_library(imgui STATIC ${IMGUI_SOURCES})
-target_include_directories(imgui PUBLIC 
-    ${IMGUI_DIR} 
+target_include_directories(imgui PUBLIC
+    ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/SDL/include
     ${CMAKE_CURRENT_SOURCE_DIR}/vulkan/include
@@ -48,17 +49,17 @@ add_library(vendor INTERFACE)
 
 target_include_directories(vendor
     INTERFACE
-        ${CMAKE_CURRENT_SOURCE_DIR}/SDL/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/vulkan/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/glm
-        ${CMAKE_CURRENT_SOURCE_DIR}/stb/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/freetype/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/harfbuzz/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/httplib
-        ${CMAKE_CURRENT_SOURCE_DIR}/nlohmann/include     
-        ${CMAKE_CURRENT_SOURCE_DIR}/minizip
-        ${IMGUI_DIR}/backends
-        ${IMGUI_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/SDL/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/vulkan/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/glm
+    ${CMAKE_CURRENT_SOURCE_DIR}/stb/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/freetype/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/harfbuzz/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/httplib
+    ${CMAKE_CURRENT_SOURCE_DIR}/nlohmann/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/minizip
+    ${IMGUI_DIR}/backends
+    ${IMGUI_DIR}
 )
 
 if(OPENSSL_FOUND)

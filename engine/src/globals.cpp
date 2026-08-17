@@ -14,9 +14,16 @@
 #include "core/ecs/world.hpp"
 #include "vulkan/pipeline.hpp"
 
+#include <SDL3/SDL.h>
+#include <stb/stb_image.h> // Only include standard stb_image.h
+#ifdef _WIN32
+#include <shobjidl.h> // For SetCurrentProcessExplicitAppUserModelID
+#endif
+
 OLIA_ENGINE::World *world = nullptr;
 std::vector<OLIA_ENGINE::GraphicsPipeline> *graphics = nullptr;
 std::vector<VkDescriptorSet> *g_descriptorSet = nullptr;
+
 namespace OLIA_ENGINE
 {
     std::unique_ptr<EngineContext> g_engine_context = nullptr;
@@ -28,18 +35,19 @@ namespace OLIA_ENGINE
 
     bool Platform::Init(const PlatformDesc &desc)
     {
+#ifdef _WIN32
+    SetCurrentProcessExplicitAppUserModelID(L"Olia.Engine.App");
+#endif
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
         {
-            std::printf(
-                "SDL_Init Error: %s\n",
-                SDL_GetError());
-
+            std::printf("SDL_Init Error: %s\n", SDL_GetError());
             return false;
         }
 
         SDL_WindowFlags flags = (SDL_WindowFlags)((desc.vulkan ? SDL_WINDOW_VULKAN : 0) |
                                                   (desc.resizable ? SDL_WINDOW_RESIZABLE : 0));
 
+        // 1. Create window
         m_window = SDL_CreateWindow(
             desc.app_name,
             static_cast<int>(desc.width),
@@ -48,17 +56,40 @@ namespace OLIA_ENGINE
 
         if (!m_window)
         {
-            std::printf(
-                "SDL_CreateWindow Error: %s\n",
-                SDL_GetError());
-
+            std::printf("SDL_CreateWindow Error: %s\n", SDL_GetError());
             SDL_Quit();
-
             return false;
         }
 
-        m_running = true;
+        // 2. Load PNG using stb_image (forces 4 channels / RGBA)
+        int width = 0, height = 0, channels = 0;
+        unsigned char *pixels = stbi_load("assets/icon.png", &width, &height, &channels, 4);
 
+        if (pixels)
+        {
+            // 3. Create SDL3 surface directly from pixel memory
+            SDL_Surface *iconSurface = SDL_CreateSurfaceFrom(
+                width,
+                height,
+                SDL_PIXELFORMAT_RGBA32,
+                pixels,
+                width * 4 // pitch (width * bytes_per_pixel)
+            );
+
+            if (iconSurface)
+            {
+                SDL_SetWindowIcon(m_window, iconSurface);
+                SDL_DestroySurface(iconSurface); // Destroys SDL surface wrapper
+            }
+
+            stbi_image_free(pixels); // Free raw pixel memory allocated by stb_image
+        }
+        else
+        {
+            std::printf("Warning: Failed to load icon image: assets/icon.png\n");
+        }
+
+        m_running = true;
         return true;
     }
 

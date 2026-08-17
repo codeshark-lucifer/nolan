@@ -56,6 +56,7 @@ namespace OLIA_ENGINE
             return false;
         if (!VK_Init(g_engine_context->vk_ctx, *g_engine_context->platform.GetWindow()))
             return false;
+
         return true;
     }
 

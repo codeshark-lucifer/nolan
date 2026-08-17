@@ -566,9 +566,11 @@ public:
         float gap = 10.0f;
 
         float totalWidth = versionWidth + gap + playWidth + gap + quickWidth;
-        float startX = (io.DisplaySize.x - totalWidth) * 0.5f;
+        float windowContentWidth = ImGui::GetContentRegionAvail().x;
+        float startX = (windowContentWidth - totalWidth) * 0.5f;
 
-        ImGui::SetCursorPos(ImVec2(startX, startY));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
+        ImGui::SetCursorPosY(startY);
 
         DrawVersionSelector();
         ImGui::SameLine(0.0f, gap);
@@ -579,7 +581,9 @@ public:
         DrawQuickPlay();
 
         // Status Feedback
-        ImGui::SetCursorPos(ImVec2(startX, startY + 68.0f));
+        float statusX = (windowContentWidth - ImGui::CalcTextSize(g_Launcher.statusText.c_str()).x) * 0.5f;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + statusX);
+        ImGui::SetCursorPosY(startY + 68.0f);
         DrawStatusBanner();
 
         ImGui::End();

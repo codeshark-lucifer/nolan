@@ -4,6 +4,11 @@ file(GLOB_RECURSE APPLICATION_SOURCES
     src/*.c
 )
 
+# Add Windows resource file (.rc) for Taskbar icon
+if(WIN32)
+    list(APPEND APPLICATION_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/app_icon.rc")
+endif()
+
 add_executable(application 
     ${APPLICATION_SOURCES}
 )
@@ -24,10 +29,19 @@ add_custom_command(TARGET application POST_BUILD
         $<TARGET_FILE_DIR:application>
 )
 
+# Windows
 if(WIN32)
-    target_link_options(application PRIVATE
-        -static
-        -static-libgcc
-        -static-libstdc++
-    )
+    if(MINGW)
+        target_link_options(application PRIVATE
+            -static-libgcc
+            -static-libstdc++
+        )
+    endif()
+
+    # Hide console window for GUI application
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_link_options(application PRIVATE
+            -mwindows
+        )
+    endif()
 endif()
