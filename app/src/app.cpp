@@ -1,3 +1,6 @@
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include "app.hpp"
 #include "engine/engine.h"
 #include "vulkan/vk_context.h"
@@ -14,6 +17,8 @@
 #include <atomic>
 #include <filesystem>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
 
 #include "launcher/launcher.hpp"
 
@@ -65,6 +70,144 @@ struct LauncherData
     std::string versionToUninstall = "";
 } g_Launcher;
 
+// ============================================================================
+// JSON Config Helper Functions (Saves in same directory as the .exe)
+// ============================================================================
+static std::string GetConfigFilePath()
+{
+    char path[MAX_PATH] = {0};
+    DWORD length = GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (length > 0)
+    {
+        fs::path exePath(path);
+        return (exePath.parent_path() / "data.json").string();
+    }
+    return "data.json";
+}
+
+static void SaveConfig()
+{
+    std::string filePath = GetConfigFilePath();
+    std::ofstream file(filePath);
+    if (!file.is_open())
+        return;
+
+    auto escapeJsonString = [](const std::string &str) {
+        std::string res;
+        for (char c : str) {
+            if (c == '\\') res += "\\\\";
+            else if (c == '"') res += "\\\"";
+            else res += c;
+        }
+        return res;
+    };
+
+    file << "{\n";
+    file << "  \"username\": \"" << escapeJsonString(g_Launcher.username) << "\",\n";
+    file << "  \"profileName\": \"" << escapeJsonString(g_Launcher.profileName) << "\",\n";
+    file << "  \"accountType\": \"" << escapeJsonString(g_Launcher.accountType) << "\",\n";
+    file << "  \"isOnlineMode\": " << (g_Launcher.isOnlineMode ? "true" : "false") << ",\n";
+    file << "  \"closeAfterLaunch\": " << (g_Launcher.closeAfterLaunch ? "true" : "false") << ",\n";
+    file << "  \"checkForUpdates\": " << (g_Launcher.checkForUpdates ? "true" : "false") << ",\n";
+    file << "  \"useSystemLanguage\": " << (g_Launcher.useSystemLanguage ? "true" : "false") << ",\n";
+    file << "  \"ramAllocation\": " << g_Launcher.ramAllocation << ",\n";
+    file << "  \"minecraftDirectory\": \"" << escapeJsonString(g_Launcher.minecraftDirectory) << "\",\n";
+    file << "  \"selectedVersion\": " << g_Launcher.selectedVersion << "\n";
+    file << "}\n";
+
+    file.close();
+}
+
+static void LoadConfig()
+{
+    std::string filePath = GetConfigFilePath();
+    std::ifstream file(filePath);
+    if (!file.is_open())
+        return;
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string json = buffer.str();
+    file.close();
+
+    auto getJsonString = [](const std::string &json, const std::string &key) -> std::string {
+        std::string searchKey = "\"" + key + "\":";
+        size_t pos = json.find(searchKey);
+        if (pos == std::string::npos) return "";
+
+        size_t startQuote = json.find("\"", pos + searchKey.length());
+        if (startQuote == std::string::npos) return "";
+
+        size_t endQuote = json.find("\"", startQuote + 1);
+        while (endQuote != std::string::npos && json[endQuote - 1] == '\\') {
+            endQuote = json.find("\"", endQuote + 1);
+        }
+        if (endQuote == std::string::npos) return "";
+
+        std::string raw = json.substr(startQuote + 1, endQuote - startQuote - 1);
+        std::string unescaped;
+        for (size_t i = 0; i < raw.length(); ++i) {
+            if (raw[i] == '\\' && i + 1 < raw.length() && (raw[i + 1] == '\\' || raw[i + 1] == '"')) {
+                unescaped += raw[i + 1];
+                i++;
+            } else {
+                unescaped += raw[i];
+            }
+        }
+        return unescaped;
+    };
+
+    auto getJsonBool = [](const std::string &json, const std::string &key, bool defaultVal) -> bool {
+        std::string searchKey = "\"" + key + "\":";
+        size_t pos = json.find(searchKey);
+        if (pos == std::string::npos) return defaultVal;
+
+        size_t valStart = json.find_first_not_of(" \t\r\n", pos + searchKey.length());
+        if (valStart == std::string::npos) return defaultVal;
+
+        if (json.compare(valStart, 4, "true") == 0) return true;
+        if (json.compare(valStart, 5, "false") == 0) return false;
+        return defaultVal;
+    };
+
+    auto getJsonInt = [](const std::string &json, const std::string &key, int defaultVal) -> int {
+        std::string searchKey = "\"" + key + "\":";
+        size_t pos = json.find(searchKey);
+        if (pos == std::string::npos) return defaultVal;
+
+        size_t valStart = json.find_first_not_of(" \t\r\n", pos + searchKey.length());
+        if (valStart == std::string::npos) return defaultVal;
+
+        try {
+            return std::stoi(json.substr(valStart));
+        } catch (...) {
+            return defaultVal;
+        }
+    };
+
+    std::string valStr;
+
+    valStr = getJsonString(json, "username");
+    if (!valStr.empty()) std::strncpy(g_Launcher.username, valStr.c_str(), sizeof(g_Launcher.username) - 1);
+
+    valStr = getJsonString(json, "profileName");
+    if (!valStr.empty()) std::strncpy(g_Launcher.profileName, valStr.c_str(), sizeof(g_Launcher.profileName) - 1);
+
+    valStr = getJsonString(json, "accountType");
+    if (!valStr.empty()) std::strncpy(g_Launcher.accountType, valStr.c_str(), sizeof(g_Launcher.accountType) - 1);
+
+    valStr = getJsonString(json, "minecraftDirectory");
+    if (!valStr.empty()) std::strncpy(g_Launcher.minecraftDirectory, valStr.c_str(), sizeof(g_Launcher.minecraftDirectory) - 1);
+
+    g_Launcher.isOnlineMode = getJsonBool(json, "isOnlineMode", g_Launcher.isOnlineMode);
+    g_Launcher.closeAfterLaunch = getJsonBool(json, "closeAfterLaunch", g_Launcher.closeAfterLaunch);
+    g_Launcher.checkForUpdates = getJsonBool(json, "checkForUpdates", g_Launcher.checkForUpdates);
+    g_Launcher.useSystemLanguage = getJsonBool(json, "useSystemLanguage", g_Launcher.useSystemLanguage);
+
+    g_Launcher.ramAllocation = getJsonInt(json, "ramAllocation", g_Launcher.ramAllocation);
+    g_Launcher.selectedVersion = getJsonInt(json, "selectedVersion", g_Launcher.selectedVersion);
+}
+
 // Spinner indicator for loading states
 static const char *GetSpinnerChar()
 {
@@ -85,7 +228,9 @@ static void RefreshVersionsAsync()
     std::thread([]()
     {
         g_Launcher.versions = MinecraftLauncher::FetchVersions();
-        g_Launcher.selectedVersion = 0;
+        if (g_Launcher.selectedVersion >= (int)g_Launcher.versions.size()) {
+            g_Launcher.selectedVersion = 0;
+        }
         g_Launcher.statusText = "Ready";
         g_Launcher.isBusy = false;
     }).detach();
@@ -166,6 +311,8 @@ static void StartMSALoginAsync()
                 std::strncpy(g_Launcher.username, g_Launcher.profile.username.c_str(), sizeof(g_Launcher.username) - 1);
                 std::strncpy(g_Launcher.profileName, g_Launcher.profile.username.c_str(), sizeof(g_Launcher.profileName) - 1);
                 std::strncpy(g_Launcher.accountType, "Microsoft Account", sizeof(g_Launcher.accountType) - 1);
+                
+                SaveConfig(); // Save profile when Microsoft authentication succeeds
             }
 
             g_Launcher.statusText = authStatus;
@@ -427,6 +574,7 @@ private:
                     if (ImGui::Selectable("##VersionItem", selected, ImGuiSelectableFlags_None, itemSize))
                     {
                         g_Launcher.selectedVersion = i;
+                        SaveConfig(); // Save selected version
                         ImGui::CloseCurrentPopup();
                     }
 
@@ -779,6 +927,13 @@ private:
 
         ImGui::SetNextItemWidth(500.0f);
         ImGui::SliderInt("##RamAllocation", &g_Launcher.ramAllocation, 1, 16, "%d GB RAM");
+
+        ImGui::Dummy(ImVec2(0.0f, 24.0f));
+        if (ImGui::Button("SAVE SETTINGS", ImVec2(180.0f, 45.0f)))
+        {
+            SaveConfig();
+            g_Launcher.statusText = "General settings saved!";
+        }
     }
 
     static void DrawProfile()
@@ -832,6 +987,7 @@ private:
         if (ImGui::Button("SAVE PROFILE", ImVec2(180.0f, 45.0f)))
         {
             std::strncpy(g_Launcher.username, g_Launcher.profileName, sizeof(g_Launcher.username) - 1);
+            SaveConfig();
             g_Launcher.statusText = "Profile options saved!";
         }
     }
@@ -888,6 +1044,9 @@ void setup()
         std::string defDir = std::string(appData) + "\\.minecraft";
         std::strncpy(g_Launcher.minecraftDirectory, defDir.c_str(), sizeof(g_Launcher.minecraftDirectory) - 1);
     }
+
+    // Load configuration directly from same folder as .exe
+    LoadConfig();
 
     RefreshVersionsAsync();
 }
