@@ -48,8 +48,8 @@ namespace OLIA_ENGINE
         world = &g_engine_context->world;
         graphics = &g_engine_context->vk_ctx.graphics;
         g_descriptorSet = &g_engine_context->vk_ctx.descriptorSets;
-        if (!g_engine_context->platform.Init({.width = 956,
-                                              .height = 540,
+        if (!g_engine_context->platform.Init({.width = 1434,
+                                              .height = 810,
                                               .app_name = "olia",
                                               .resizable = false,
                                               .vulkan = true}))

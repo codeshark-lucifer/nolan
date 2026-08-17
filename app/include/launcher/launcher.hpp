@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <wincrypt.h>
 #include <urlmon.h>
+#include <shellapi.h>
 
 #pragma comment(lib, "urlmon.lib")
 
@@ -46,6 +47,15 @@ struct VersionEntry
     bool isDownloaded = false;
 };
 
+struct MSADeviceCode
+{
+    std::string userCode;
+    std::string deviceCode;
+    std::string verificationUri;
+    int interval = 5;
+    int expiresIn = 900;
+};
+
 // --- Helper Utilities ---
 
 inline std::string Quote(const std::string &value)
@@ -59,49 +69,47 @@ inline std::string NormalizePath(std::string path)
     return path;
 }
 
-inline std::string ReplaceToken(std::string str, const std::string &token, const std::string &replacement)
-{
-    size_t pos = 0;
-    while ((pos = str.find(token, pos)) != std::string::npos) {
-        str.replace(pos, token.length(), replacement);
-        pos += replacement.length();
-    }
-    return str;
-}
-
 inline bool ParseUrl(const std::string &url, std::string &host, std::string &path)
 {
     std::string s = url;
-    if (s.rfind("https://", 0) == 0) s = s.substr(8);
-    else if (s.rfind("http://", 0) == 0) s = s.substr(7);
+    if (s.rfind("https://", 0) == 0)
+        s = s.substr(8);
+    else if (s.rfind("http://", 0) == 0)
+        s = s.substr(7);
 
     size_t pos = s.find('/');
-    if (pos == std::string::npos) {
+    if (pos == std::string::npos)
+    {
         host = s;
         path = "/";
-    } else {
+    }
+    else
+    {
         host = s.substr(0, pos);
         path = s.substr(pos);
     }
     return true;
 }
 
-// Win32 SHA-1 Hash Calculation for File Integrity Verification
 inline std::string CalculateSHA1(const std::string &filepath)
 {
     HANDLE hFile = CreateFileA(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) return "";
+    if (hFile == INVALID_HANDLE_VALUE)
+        return "";
 
     HCRYPTPROV hProv = 0;
     HCRYPTHASH hHash = 0;
     BYTE rgbHash[20] = {0};
     DWORD cbHash = 20;
 
-    if (CryptAcquireContextA(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
-        if (CryptCreateHash(hProv, CALG_SHA1, 0, 0, &hHash)) {
+    if (CryptAcquireContextA(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
+    {
+        if (CryptCreateHash(hProv, CALG_SHA1, 0, 0, &hHash))
+        {
             BYTE buffer[8192];
             DWORD bytesRead = 0;
-            while (ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, NULL) && bytesRead > 0) {
+            while (ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, NULL) && bytesRead > 0)
+            {
                 CryptHashData(hHash, buffer, bytesRead, 0);
             }
             CryptGetHashParam(hHash, HP_HASHVAL, rgbHash, &cbHash, 0);
@@ -122,61 +130,65 @@ inline std::string CalculateSHA1(const std::string &filepath)
     return std::string(hashStr);
 }
 
-// Verify file integrity using size and optional SHA-1 hash
 inline bool IsFileValid(const std::string &filepath, size_t expectedSize = 0, const std::string &expectedHash = "")
 {
-    if (!fs::exists(filepath)) return false;
-    if (expectedSize > 0 && fs::file_size(filepath) != expectedSize) return false;
-    
-    if (!expectedHash.empty()) {
+    if (!fs::exists(filepath))
+        return false;
+    if (expectedSize > 0 && fs::file_size(filepath) != expectedSize)
+        return false;
+
+    if (!expectedHash.empty())
+    {
         std::string actualHash = CalculateSHA1(filepath);
         std::string expectedLower = expectedHash;
         std::transform(expectedLower.begin(), expectedLower.end(), expectedLower.begin(), ::tolower);
-        if (actualHash != expectedLower) return false;
+        if (actualHash != expectedLower)
+            return false;
     }
 
     return true;
 }
 
-// Downloader with Win32 URLDownloadToFileA and C++ httplib fallback
 inline bool DownloadFile(const std::string &url, const std::string &savePath)
 {
     std::string normPath = NormalizePath(savePath);
     fs::create_directories(fs::path(normPath).parent_path());
 
-    // 1. Win32 Native API (Handles HTTPS & 301/302 redirects natively)
     HRESULT hr = URLDownloadToFileA(NULL, url.c_str(), normPath.c_str(), 0, NULL);
-    if (SUCCEEDED(hr) && fs::exists(normPath) && fs::file_size(normPath) > 0) {
+    if (SUCCEEDED(hr) && fs::exists(normPath) && fs::file_size(normPath) > 0)
+    {
         return true;
     }
 
-    // 2. Windows system curl.exe with -L
     std::string cmd = "curl.exe -s -f -L --create-dirs -o \"" + normPath + "\" \"" + url + "\"";
     int ret = system(cmd.c_str());
-    if (ret == 0 && fs::exists(normPath) && fs::file_size(normPath) > 0) {
+    if (ret == 0 && fs::exists(normPath) && fs::file_size(normPath) > 0)
+    {
         return true;
     }
 
-    // 3. C++ httplib fallback
     std::string host, path;
-    if (ParseUrl(url, host, path)) {
+    if (ParseUrl(url, host, path))
+    {
         httplib::SSLClient cli(host);
         cli.enable_server_certificate_verification(false);
         cli.set_follow_location(true);
         cli.set_connection_timeout(5, 0);
 
         httplib::Headers headers = {
-            { "User-Agent", "MinecraftLauncher/1.0 (Windows NT 10.0; Win64; x64)" }
-        };
+            {"User-Agent", "MinecraftLauncher/1.0 (Windows NT 10.0; Win64; x64)"}};
 
         auto res = cli.Get(path.c_str(), headers);
-        if (res && (res->status == 301 || res->status == 302) && res->has_header("Location")) {
+        if (res && (res->status == 301 || res->status == 302) && res->has_header("Location"))
+        {
             std::string redirectUrl = res->get_header_value("Location");
             return DownloadFile(redirectUrl, normPath);
         }
-        if (res && res->status == 200) {
+        if (res && res->status == 200)
+        {
             std::ofstream out(normPath, std::ios::binary);
-            if (out.is_open()) {
+            if (out.is_open())
+            {
                 out.write(res->body.c_str(), res->body.size());
                 out.close();
                 return true;
@@ -187,12 +199,13 @@ inline bool DownloadFile(const std::string &url, const std::string &savePath)
     return false;
 }
 
-// Parallel Multi-Threaded Asset Downloader (8 Parallel Worker Threads)
 inline void DownloadAssetObjectsParallel(const std::string &gameDir, const json &assetData, std::atomic<float> &progressOut)
 {
-    if (!assetData.contains("objects")) return;
+    if (!assetData.contains("objects"))
+        return;
 
-    struct Task {
+    struct Task
+    {
         std::string url;
         std::string path;
         size_t expectedSize;
@@ -201,27 +214,27 @@ inline void DownloadAssetObjectsParallel(const std::string &gameDir, const json 
 
     std::vector<Task> tasks;
 
-    for (auto& [key, value] : assetData["objects"].items()) {
+    for (auto &[key, value] : assetData["objects"].items())
+    {
         std::string hash = value["hash"].get<std::string>();
         std::string prefix = hash.substr(0, 2);
         std::string objPath = gameDir + "\\assets\\objects\\" + prefix + "\\" + hash;
         size_t expectedSize = value.value("size", 0);
 
-        // Fast Verification: Check file existence and size
-        if (IsFileValid(objPath, expectedSize)) {
+        if (IsFileValid(objPath, expectedSize))
             continue;
-        }
 
         std::string objUrl = "https://resources.download.minecraft.net/" + prefix + "/" + hash;
         tasks.push_back({objUrl, objPath, expectedSize, hash});
     }
 
-    if (tasks.empty()) {
+    if (tasks.empty())
+    {
         progressOut = 1.0f;
         return;
     }
 
-    std::cout << "[Launcher] Downloading " << tasks.size() << " missing/corrupted assets using parallel threads...\n";
+    std::cout << "[Launcher] Downloading " << tasks.size() << " missing assets...\n";
 
     std::atomic<size_t> completedTasks = 0;
     std::atomic<size_t> taskIndex = 0;
@@ -230,8 +243,10 @@ inline void DownloadAssetObjectsParallel(const std::string &gameDir, const json 
     size_t numThreads = std::min<size_t>(8, std::thread::hardware_concurrency());
     std::vector<std::thread> workers;
 
-    for (size_t t = 0; t < numThreads; ++t) {
-        workers.emplace_back([&]() {
+    for (size_t t = 0; t < numThreads; ++t)
+    {
+        workers.emplace_back([&]()
+        {
             while (true) {
                 size_t idx = taskIndex.fetch_add(1);
                 if (idx >= totalTasks) break;
@@ -245,12 +260,13 @@ inline void DownloadAssetObjectsParallel(const std::string &gameDir, const json 
         });
     }
 
-    for (auto &w : workers) {
-        if (w.joinable()) w.join();
+    for (auto &w : workers)
+    {
+        if (w.joinable())
+            w.join();
     }
 
     progressOut = 1.0f;
-    std::cout << "[Launcher] Asset synchronization completed successfully!\n";
 }
 
 inline std::string GenerateOfflineUUID(const std::string &username)
@@ -261,8 +277,10 @@ inline std::string GenerateOfflineUUID(const std::string &username)
     BYTE rgbHash[16] = {0};
     DWORD cbHash = 16;
 
-    if (CryptAcquireContextA(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
-        if (CryptCreateHash(hProv, CALG_MD5, 0, 0, &hHash)) {
+    if (CryptAcquireContextA(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
+    {
+        if (CryptCreateHash(hProv, CALG_MD5, 0, 0, &hHash))
+        {
             CryptHashData(hHash, (BYTE *)input.c_str(), (DWORD)input.length(), 0);
             CryptGetHashParam(hHash, HP_HASHVAL, rgbHash, &cbHash, 0);
             CryptDestroyHash(hHash);
@@ -301,17 +319,18 @@ inline bool IsAllowedForWindowsX64(const std::string &path)
 
 inline bool ShouldIncludeLibrary(const json &lib)
 {
-    if (lib.contains("rules")) {
+    if (lib.contains("rules"))
+    {
         bool allowed = false;
-        for (const auto &rule : lib["rules"]) {
+        for (const auto &rule : lib["rules"])
+        {
             std::string action = rule.value("action", "");
             bool osMatches = true;
 
-            if (rule.contains("os")) {
+            if (rule.contains("os"))
+            {
                 std::string osName = rule["os"].value("name", "");
-                if (osName != "windows") {
-                    osMatches = false;
-                }
+                if (osName != "windows") osMatches = false;
             }
 
             if (action == "allow" && osMatches) allowed = true;
@@ -320,7 +339,8 @@ inline bool ShouldIncludeLibrary(const json &lib)
         if (!allowed) return false;
     }
 
-    if (lib.contains("downloads") && lib["downloads"].contains("artifact")) {
+    if (lib.contains("downloads") && lib["downloads"].contains("artifact"))
+    {
         std::string libPath = lib["downloads"]["artifact"]["path"].get<std::string>();
         if (!IsAllowedForWindowsX64(libPath)) return false;
     }
@@ -338,6 +358,225 @@ inline void ExtractNativeJar(const std::string &jarPath, const std::string &outp
     system(cmd.c_str());
 }
 
+// --- Microsoft Authentication Implementation ---
+
+class MicrosoftAuth
+{
+public:
+    static bool RequestDeviceCode(MSADeviceCode &outCode)
+    {
+        httplib::SSLClient cli("login.microsoftonline.com");
+        cli.enable_server_certificate_verification(false);
+        cli.set_connection_timeout(10, 0);
+
+        std::string body = "client_id=00000000402b5328&scope=XboxLive.signin%20offline_access";
+        auto res = cli.Post("/consumers/oauth2/v2.0/devicecode", body, "application/x-www-form-urlencoded");
+
+        if (res && res->status == 200)
+        {
+            json j = json::parse(res->body);
+            outCode.userCode = j.value("user_code", "");
+            outCode.deviceCode = j.value("device_code", "");
+            outCode.verificationUri = j.value("verification_uri", "https://microsoft.com/link");
+            outCode.interval = j.value("interval", 5);
+            outCode.expiresIn = j.value("expires_in", 900);
+            return true;
+        }
+        return false;
+    }
+
+    static bool AuthenticateWithDeviceCode(const MSADeviceCode &code, PlayerProfile &outProfile, std::atomic<bool> &cancelFlag, std::string &statusOut)
+    {
+        std::string msaAccessToken = "";
+
+        // Phase 1: Poll Microsoft Token
+        int elapsed = 0;
+        while (elapsed < code.expiresIn && !cancelFlag)
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(code.interval));
+            elapsed += code.interval;
+
+            httplib::SSLClient cli("login.microsoftonline.com");
+            cli.enable_server_certificate_verification(false);
+
+            std::string body = "grant_type=urn:ietf:params:oauth:grant-type:device_code&client_id=00000000402b5328&device_code=" + code.deviceCode;
+            auto res = cli.Post("/consumers/oauth2/v2.0/token", body, "application/x-www-form-urlencoded");
+
+            if (res && res->status == 200)
+            {
+                json j = json::parse(res->body);
+                if (j.contains("access_token"))
+                {
+                    msaAccessToken = j["access_token"].get<std::string>();
+                    break;
+                }
+            }
+            else if (res && res->status == 400)
+            {
+                json j = json::parse(res->body);
+                std::string err = j.value("error", "");
+                if (err != "authorization_pending")
+                {
+                    statusOut = "Microsoft Login Error: " + err;
+                    return false;
+                }
+            }
+        }
+
+        if (msaAccessToken.empty())
+        {
+            statusOut = cancelFlag ? "Authentication cancelled." : "Login timed out.";
+            return false;
+        }
+
+        statusOut = "Authenticating with Xbox Live...";
+
+        // Phase 2: Xbox Live Authentication
+        std::string xblToken = "";
+        std::string userHash = "";
+        {
+            httplib::SSLClient cli("user.auth.xboxlive.com");
+            cli.enable_server_certificate_verification(false);
+
+            json body = {
+                {"Properties", {
+                    {"AuthMethod", "RPS"},
+                    {"SiteName", "user.auth.xboxlive.com"},
+                    {"RpsTicket", "d=" + msaAccessToken}
+                }},
+                {"RelyingParty", "http://auth.xboxlive.com"},
+                {"TokenType", "JWT"}
+            };
+
+            auto res = cli.Post("/user/authenticate", body.dump(), "application/json");
+            if (res && res->status == 200)
+            {
+                json j = json::parse(res->body);
+                xblToken = j.value("Token", "");
+                if (j.contains("DisplayClaims") && j["DisplayClaims"].contains("xui") && !j["DisplayClaims"]["xui"].empty())
+                {
+                    userHash = j["DisplayClaims"]["xui"][0].value("uhs", "");
+                }
+            }
+        }
+
+        if (xblToken.empty() || userHash.empty())
+        {
+            statusOut = "Failed Xbox Live Authentication.";
+            return false;
+        }
+
+        statusOut = "Requesting XSTS Security Token...";
+
+        // Phase 3: XSTS Token
+        std::string xstsToken = "";
+        {
+            httplib::SSLClient cli("xsts.auth.xboxlive.com");
+            cli.enable_server_certificate_verification(false);
+
+            json body = {
+                {"Properties", {
+                    {"SandboxId", "RETAIL"},
+                    {"UserTokens", {xblToken}}
+                }},
+                {"RelyingParty", "rp://api.minecraftservices.com/"},
+                {"TokenType", "JWT"}
+            };
+
+            auto res = cli.Post("/xsts/authorize", body.dump(), "application/json");
+            if (res && res->status == 200)
+            {
+                json j = json::parse(res->body);
+                xstsToken = j.value("Token", "");
+            }
+            else if (res && res->status == 401)
+            {
+                json j = json::parse(res->body);
+                uint64_t errCode = j.value("XErr", 0ULL);
+                if (errCode == 2148916233ULL) statusOut = "Account has no Xbox account.";
+                else if (errCode == 2148916238ULL) statusOut = "Child account requires family approval.";
+                return false;
+            }
+        }
+
+        if (xstsToken.empty())
+        {
+            statusOut = "Failed XSTS authorization.";
+            return false;
+        }
+
+        statusOut = "Logging into Minecraft Services...";
+
+        // Phase 4: Minecraft Login
+        std::string mcAccessToken = "";
+        {
+            httplib::SSLClient cli("api.minecraftservices.com");
+            cli.enable_server_certificate_verification(false);
+
+            json body = {
+                {"identityToken", "XBL3.0 x=" + userHash + ";" + xstsToken}
+            };
+
+            auto res = cli.Post("/authentication/login_with_xbox", body.dump(), "application/json");
+            if (res && res->status == 200)
+            {
+                json j = json::parse(res->body);
+                mcAccessToken = j.value("access_token", "");
+            }
+        }
+
+        if (mcAccessToken.empty())
+        {
+            statusOut = "Minecraft authentication failed.";
+            return false;
+        }
+
+        statusOut = "Fetching Minecraft Profile...";
+
+        // Phase 5: Fetch Minecraft Profile
+        {
+            httplib::SSLClient cli("api.minecraftservices.com");
+            cli.enable_server_certificate_verification(false);
+
+            httplib::Headers headers = {
+                {"Authorization", "Bearer " + mcAccessToken}
+            };
+
+            auto res = cli.Get("/minecraft/profile", headers);
+            if (res && res->status == 200)
+            {
+                json j = json::parse(res->body);
+                std::string rawUuid = j.value("id", "");
+                std::string name = j.value("name", "");
+
+                std::string formattedUuid = rawUuid;
+                if (rawUuid.length() == 32)
+                {
+                    formattedUuid = rawUuid.substr(0, 8) + "-" +
+                                    rawUuid.substr(8, 4) + "-" +
+                                    rawUuid.substr(12, 4) + "-" +
+                                    rawUuid.substr(16, 4) + "-" +
+                                    rawUuid.substr(20);
+                }
+
+                outProfile.username = name;
+                outProfile.uuid = formattedUuid;
+                outProfile.accessToken = mcAccessToken;
+                outProfile.userType = "msa";
+                outProfile.isOnline = true;
+
+                statusOut = "Logged in as " + name;
+                return true;
+            }
+            else
+            {
+                statusOut = "Minecraft account does not own Minecraft!";
+                return false;
+            }
+        }
+    }
+};
+
 // --- Main Launcher Class ---
 
 class MinecraftLauncher
@@ -350,13 +589,17 @@ public:
         if (!appDataEnv) return installed;
 
         std::string verDir = std::string(appDataEnv) + "\\.minecraft\\versions";
-        if (fs::exists(verDir)) {
-            for (const auto &entry : fs::directory_iterator(verDir)) {
-                if (entry.is_directory()) {
+        if (fs::exists(verDir))
+        {
+            for (const auto &entry : fs::directory_iterator(verDir))
+            {
+                if (entry.is_directory())
+                {
                     std::string verName = entry.path().filename().string();
                     std::string jarFile = entry.path().string() + "\\" + verName + ".jar";
                     std::string jsonFile = entry.path().string() + "\\" + verName + ".json";
-                    if (fs::exists(jarFile) || fs::exists(jsonFile)) {
+                    if (fs::exists(jarFile) || fs::exists(jsonFile))
+                    {
                         installed.push_back(verName);
                     }
                 }
@@ -375,22 +618,26 @@ public:
         cli.enable_server_certificate_verification(false);
 
         auto res = cli.Get("/mc/game/version_manifest_v2.json");
-        if (res && res->status == 200) {
+        if (res && res->status == 200)
+        {
             json data = json::parse(res->body);
-            for (const auto &ver : data["versions"]) {
-                if (ver["type"] == "release") {
+            for (const auto &ver : data["versions"])
+            {
+                if (ver["type"] == "release")
+                {
                     std::string verId = ver["id"].get<std::string>();
                     bool downloaded = localSet.count(verId) > 0;
-                    versions.push_back({
-                        verId,
-                        ver["type"].get<std::string>(),
-                        ver["url"].get<std::string>(),
-                        downloaded
-                    });
+                    versions.push_back({verId,
+                                        ver["type"].get<std::string>(),
+                                        ver["url"].get<std::string>(),
+                                        downloaded});
                 }
             }
-        } else {
-            for (const auto &localVer : localVersions) {
+        }
+        else
+        {
+            for (const auto &localVer : localVersions)
+            {
                 versions.push_back({localVer, "release", "", true});
             }
         }
@@ -424,18 +671,20 @@ public:
         fs::create_directories(nativesDir);
 
         std::string urlToUse = versionUrl;
-        if (urlToUse.empty()) {
-            for (const auto &v : FetchVersions()) {
-                if (v.id == version) {
+        if (urlToUse.empty())
+        {
+            for (const auto &v : FetchVersions())
+            {
+                if (v.id == version)
+                {
                     urlToUse = v.url;
                     break;
                 }
             }
         }
 
-        // 1. Download Version JSON
-        if (!fs::exists(jsonPath) && !urlToUse.empty()) {
-            std::cout << "[Launcher] Downloading version manifest for " << version << "...\n";
+        if (!fs::exists(jsonPath) && !urlToUse.empty())
+        {
             DownloadFile(urlToUse, jsonPath);
         }
 
@@ -445,52 +694,58 @@ public:
         outVerData = json::parse(f);
         f.close();
 
-        // 2. Download Client JAR
-        if (!fs::exists(jarPath)) {
-            if (outVerData.contains("downloads") && outVerData["downloads"].contains("client")) {
+        if (!fs::exists(jarPath))
+        {
+            if (outVerData.contains("downloads") && outVerData["downloads"].contains("client"))
+            {
                 std::string clientUrl = outVerData["downloads"]["client"]["url"].get<std::string>();
-                std::cout << "[Launcher] Downloading client.jar...\n";
                 DownloadFile(clientUrl, jarPath);
             }
         }
 
-        // 3. Download Libraries & Natives
-        if (outVerData.contains("libraries")) {
-            for (const auto &lib : outVerData["libraries"]) {
+        if (outVerData.contains("libraries"))
+        {
+            for (const auto &lib : outVerData["libraries"])
+            {
                 if (!ShouldIncludeLibrary(lib)) continue;
 
-                if (lib.contains("downloads") && lib["downloads"].contains("artifact")) {
+                if (lib.contains("downloads") && lib["downloads"].contains("artifact"))
+                {
                     auto artifact = lib["downloads"]["artifact"];
                     std::string libPath = gameDir + "\\libraries\\" + artifact["path"].get<std::string>();
                     std::string libUrl = artifact["url"].get<std::string>();
                     size_t expSize = artifact.value("size", 0);
                     std::string expHash = artifact.value("sha1", "");
 
-                    if (!IsFileValid(libPath, expSize, expHash)) {
+                    if (!IsFileValid(libPath, expSize, expHash))
+                    {
                         DownloadFile(libUrl, libPath);
                     }
 
-                    if (lib.contains("natives") || libPath.find("native") != std::string::npos) {
+                    if (lib.contains("natives") || libPath.find("native") != std::string::npos)
+                    {
                         ExtractNativeJar(libPath, nativesDir);
                     }
                 }
             }
         }
 
-        // 4. Parallel Asset Object Downloader
-        if (outVerData.contains("assetIndex")) {
+        if (outVerData.contains("assetIndex"))
+        {
             std::string assetId = outVerData["assetIndex"]["id"].get<std::string>();
             std::string assetUrl = outVerData["assetIndex"]["url"].get<std::string>();
             std::string assetIndexPath = gameDir + "\\assets\\indexes\\" + assetId + ".json";
 
-            if (!fs::exists(assetIndexPath)) {
-                std::cout << "[Launcher] Downloading Asset Index (" << assetId << ")...\n";
+            if (!fs::exists(assetIndexPath))
+            {
                 DownloadFile(assetUrl, assetIndexPath);
             }
 
-            if (fs::exists(assetIndexPath)) {
+            if (fs::exists(assetIndexPath))
+            {
                 std::ifstream af(assetIndexPath);
-                if (af.is_open()) {
+                if (af.is_open())
+                {
                     json assetData = json::parse(af);
                     af.close();
 
@@ -507,13 +762,17 @@ public:
         std::string classpath = "";
         std::string clientJar = gameDir + "\\versions\\" + version + "\\" + version + ".jar";
 
-        if (verData.contains("libraries")) {
-            for (const auto &lib : verData["libraries"]) {
+        if (verData.contains("libraries"))
+        {
+            for (const auto &lib : verData["libraries"])
+            {
                 if (!ShouldIncludeLibrary(lib)) continue;
 
-                if (lib.contains("downloads") && lib["downloads"].contains("artifact")) {
+                if (lib.contains("downloads") && lib["downloads"].contains("artifact"))
+                {
                     std::string libPath = gameDir + "\\libraries\\" + lib["downloads"]["artifact"]["path"].get<std::string>();
-                    if (fs::exists(libPath)) {
+                    if (fs::exists(libPath))
+                    {
                         classpath += libPath + ";";
                     }
                 }
@@ -534,13 +793,15 @@ public:
         std::string nativesDir = gameDir + "\\versions\\" + version + "\\natives";
 
         json verData;
-        if (!EnsureVersionDownloaded(version, verData, progressOut)) {
-            std::cerr << "[Launcher] Could not load or download version data.\n";
+        if (!EnsureVersionDownloaded(version, verData, progressOut))
+        {
+            std::cerr << "[Launcher] Could not load version data.\n";
             return false;
         }
 
         std::string assetIndexId = version;
-        if (verData.contains("assetIndex") && verData["assetIndex"].contains("id")) {
+        if (verData.contains("assetIndex") && verData["assetIndex"].contains("id"))
+        {
             assetIndexId = verData["assetIndex"]["id"].get<std::string>();
         }
 
@@ -551,6 +812,13 @@ public:
         cmd += " -Xss1M";
         cmd += " -Dfile.encoding=UTF-8";
         cmd += " -Duser.language=en";
+
+        // Netty SRV DNS fix
+        cmd += " -Djava.net.preferIPv4Stack=true";
+
+        // LWJGL Native warnings fix
+        cmd += " --enable-native-access=ALL-UNNAMED";
+
         cmd += " -Djava.library.path=" + Quote(nativesDir);
         cmd += " -cp " + Quote(classpath);
 
@@ -564,20 +832,20 @@ public:
         cmd += " --assetIndex " + assetIndexId;
         cmd += " --uuid " + profile.uuid;
         cmd += " --accessToken " + profile.accessToken;
-        cmd += " --userType " + profile.userType;
+        cmd += " --userType " + std::string(profile.isOnline ? "msa" : "mojang");
         cmd += " --versionType release";
 
         std::cout << "[Launcher] Spawning Process: " << cmd << "\n";
 
-        STARTUPINFOA si = { sizeof(si) };
+        STARTUPINFOA si = {sizeof(si)};
         PROCESS_INFORMATION pi;
 
         BOOL success = CreateProcessA(
             NULL, (LPSTR)cmd.c_str(), NULL, NULL, FALSE,
-            CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi
-        );
+            CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi);
 
-        if (success) {
+        if (success)
+        {
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
             return true;
