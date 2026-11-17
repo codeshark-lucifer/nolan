@@ -37,7 +37,7 @@ namespace OLIA_ENGINE
     bool CreateSyncObjects(VKContext &ctx)
     {
         ctx.imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-        ctx.renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        ctx.renderFinishedSemaphores.resize(ctx.swapchainImages.size());
         ctx.inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 
         VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
@@ -46,8 +46,12 @@ namespace OLIA_ENGINE
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
             if (vkCreateSemaphore(ctx.device, &semaphoreInfo, ctx.allocator.callbacks(), &ctx.imageAvailableSemaphores[i]) != VK_SUCCESS ||
-                vkCreateSemaphore(ctx.device, &semaphoreInfo, ctx.allocator.callbacks(), &ctx.renderFinishedSemaphores[i]) != VK_SUCCESS ||
                 vkCreateFence(ctx.device, &fenceInfo, ctx.allocator.callbacks(), &ctx.inFlightFences[i]) != VK_SUCCESS)
+                return false;
+        }
+        for (size_t i = 0; i < ctx.renderFinishedSemaphores.size(); i++)
+        {
+            if (vkCreateSemaphore(ctx.device, &semaphoreInfo, ctx.allocator.callbacks(), &ctx.renderFinishedSemaphores[i]) != VK_SUCCESS)
                 return false;
         }
         return true;

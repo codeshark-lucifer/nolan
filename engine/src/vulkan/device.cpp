@@ -354,11 +354,11 @@ namespace OLIA_ENGINE
         // Device features
         // ------------------------------------------------------------
 
-        VkPhysicalDeviceFeatures deviceFeatures{};
+        VkPhysicalDeviceFeatures supportedFeatures{};
+        vkGetPhysicalDeviceFeatures(ctx.physicalDevice, &supportedFeatures);
 
-        // Enable features later when needed.
-        //
-        // deviceFeatures.samplerAnisotropy = VK_TRUE;
+        VkPhysicalDeviceFeatures deviceFeatures{};
+        deviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy;
 
         // ------------------------------------------------------------
         // Device extension support

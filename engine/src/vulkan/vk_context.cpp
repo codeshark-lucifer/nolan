@@ -152,8 +152,6 @@ namespace OLIA_ENGINE
             ctx.msaaSamples,
             ctx.pipelineCache);
 
-        ctx.graphics[1].descriptorSetLayout = ctx.graphics[0].descriptorSetLayout;
-
         // ---------------------------------------------------------
         // Post process
         // ---------------------------------------------------------
@@ -213,9 +211,11 @@ namespace OLIA_ENGINE
     {
         // 1. Create a dedicated Descriptor Pool for ImGui
         VkDescriptorPoolSize pool_sizes[] = {
-            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
-            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
-            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000}};
+            {VK_DESCRIPTOR_TYPE_SAMPLER, 64},
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 256},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 256},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 64},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64}};
 
         VkDescriptorPoolCreateInfo pool_info{};
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -339,137 +339,142 @@ namespace OLIA_ENGINE
             return false;
         }
 
-        // Calculate Delta Time and Total Time
-        static auto lastTime = std::chrono::high_resolution_clock::now();
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
-        lastTime = currentTime;
-
-        static float totalTime = 0.0f;
-        totalTime += deltaTime;
-
-        // ============================================================
-        // COMPUTE PASS: Run Compute Shader on GPU
-        // ============================================================
-        auto &particles = world.pool_mut<ParticleSystem>();
-        particles.for_each_mut(
-            [&](Entity entity, ParticleSystem &particle)
-            {
-                particle.Dispatch(ctx.commandBuffers[ctx.currentFrame], deltaTime, totalTime);
-            });
-
-        // ============================================================
-        // PASS 1: Render Cube + Particles Offscreen
-        // ============================================================
-        VkViewport viewport{0.0f, 0.0f, static_cast<float>(ctx.swapchainExtent.width), static_cast<float>(ctx.swapchainExtent.height), 0.0f, 1.0f};
-        VkRect2D scissor{{0, 0}, ctx.swapchainExtent};
-
-        VkRenderPassBeginInfo offscreenInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        offscreenInfo.renderPass = ctx.offscreenRenderPass;
-        offscreenInfo.framebuffer = ctx.offscreenFramebuffer;
-        offscreenInfo.renderArea.extent = ctx.swapchainExtent;
-
-        std::array<VkClearValue, 2> offscreenClears{};
-        offscreenClears[0].color = {{0.05f, 0.05f, 0.08f, 1.0f}};
-        offscreenClears[1].depthStencil = {1.0f, 0};
-        offscreenInfo.clearValueCount = static_cast<uint32_t>(offscreenClears.size());
-        offscreenInfo.pClearValues = offscreenClears.data();
-
-        vkCmdBeginRenderPass(ctx.commandBuffers[ctx.currentFrame], &offscreenInfo, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdSetViewport(ctx.commandBuffers[ctx.currentFrame], 0, 1, &viewport);
-        vkCmdSetScissor(ctx.commandBuffers[ctx.currentFrame], 0, 1, &scissor);
-
-        // Safe evaluation of Camera and Transforms
+        // Safe evaluation of Scene Presence (skip compute & 8x MSAA offscreen pass if scene is empty)
         const auto *transforms = world.pool<Transform>();
         const auto *meshes = world.pool<MeshRenderer>();
         const auto *cameras = world.pool<Camera>();
+        auto &particles = world.pool_mut<ParticleSystem>();
 
-        Camera defaultCamera{};
-        Transform defaultCamTrans{.position = glm::vec3(0.0f, 0.0f, 3.0f)};
+        const bool hasScene = (!particles.is_empty() || (transforms && meshes && !meshes->is_empty()));
 
-        const Camera *cameraPtr = nullptr;
-        const Transform *camTransPtr = nullptr;
+        VkViewport viewport{0.0f, 0.0f, static_cast<float>(ctx.swapchainExtent.width), static_cast<float>(ctx.swapchainExtent.height), 0.0f, 1.0f};
+        VkRect2D scissor{{0, 0}, ctx.swapchainExtent};
 
-        if (cameras && !cameras->is_empty())
+        if (hasScene)
         {
-            cameraPtr = &cameras->data()[0];
-            Entity camEntity = cameras->dense()[0];
-            if (transforms)
-            {
-                camTransPtr = transforms->get(camEntity);
-            }
-        }
+            // Calculate Delta Time and Total Time
+            static auto lastTime = std::chrono::high_resolution_clock::now();
+            auto currentTime = std::chrono::high_resolution_clock::now();
+            float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+            lastTime = currentTime;
 
-        if (!cameraPtr)
-            cameraPtr = &defaultCamera;
-        if (!camTransPtr)
-            camTransPtr = &defaultCamTrans;
+            static float totalTime = 0.0f;
+            totalTime += deltaTime;
 
-        // Draw Meshes
-        if (transforms && meshes)
-        {
-            // 1. Update Camera View/Projection UBO ONCE per frame
-            UpdateUniformBuffer(ctx, *cameraPtr, *camTransPtr);
-
-            Material errorMaterial = Material::CreateErrorMaterial(
-                &ctx.graphics[0],
-                ctx.descriptorSets[ctx.currentFrame]);
-
-            meshes->for_each(
-                [&](Entity entity, const MeshRenderer &mesh)
+            // ============================================================
+            // COMPUTE PASS: Run Compute Shader on GPU
+            // ============================================================
+            particles.for_each_mut(
+                [&](Entity entity, ParticleSystem &particle)
                 {
-                    const Transform *transform = transforms->get(entity);
-                    if (!transform)
-                        return;
-
-                    const Material *mat = mesh.GetMaterial();
-                    if (!mat || !mat->shader || mat->shader->pipeline == VK_NULL_HANDLE)
-                    {
-                        mat = &errorMaterial; // Draw as Magenta Error Mesh
-                    }
-
-                    // 2. Push per-object Model Matrix & Material Properties directly into Command Buffer
-                    MeshPushConstants push = mat->GetMeshPushConstants(transform->getMatrix());
-                    vkCmdPushConstants(
-                        ctx.commandBuffers[ctx.currentFrame],
-                        mat->shader->layout,
-                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                        0, sizeof(MeshPushConstants),
-                        &push);
-
-                    // 3. Draw Geometry
-                    mesh.Draw(
-                        ctx.commandBuffers[ctx.currentFrame],
-                        mat->shader->layout,
-                        mat->shader->pipeline,
-                        mat->descriptorSet);
+                    particle.Dispatch(ctx.commandBuffers[ctx.currentFrame], deltaTime, totalTime);
                 });
-        }
 
-        // Draw Particles
-        particles.for_each_mut(
-            [&](Entity entity, ParticleSystem &particle)
+            // ============================================================
+            // PASS 1: Render Cube + Particles Offscreen
+            // ============================================================
+            VkRenderPassBeginInfo offscreenInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            offscreenInfo.renderPass = ctx.offscreenRenderPass;
+            offscreenInfo.framebuffer = ctx.offscreenFramebuffer;
+            offscreenInfo.renderArea.extent = ctx.swapchainExtent;
+
+            std::array<VkClearValue, 2> offscreenClears{};
+            offscreenClears[0].color = {{0.05f, 0.05f, 0.08f, 1.0f}};
+            offscreenClears[1].depthStencil = {1.0f, 0};
+            offscreenInfo.clearValueCount = static_cast<uint32_t>(offscreenClears.size());
+            offscreenInfo.pClearValues = offscreenClears.data();
+
+            vkCmdBeginRenderPass(ctx.commandBuffers[ctx.currentFrame], &offscreenInfo, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdSetViewport(ctx.commandBuffers[ctx.currentFrame], 0, 1, &viewport);
+            vkCmdSetScissor(ctx.commandBuffers[ctx.currentFrame], 0, 1, &scissor);
+
+            Camera defaultCamera{};
+            Transform defaultCamTrans{.position = glm::vec3(0.0f, 0.0f, 3.0f)};
+
+            const Camera *cameraPtr = nullptr;
+            const Transform *camTransPtr = nullptr;
+
+            if (cameras && !cameras->is_empty())
             {
-                vkCmdBindPipeline(ctx.commandBuffers[ctx.currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.graphics[1].pipeline);
-                vkCmdBindDescriptorSets(
-                    ctx.commandBuffers[ctx.currentFrame],
-                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    ctx.graphics[1].layout,
-                    0, 1,
-                    &ctx.descriptorSets[ctx.currentFrame],
-                    0, nullptr);
+                cameraPtr = &cameras->data()[0];
+                Entity camEntity = cameras->dense()[0];
+                if (transforms)
+                {
+                    camTransPtr = transforms->get(camEntity);
+                }
+            }
 
-                VkBuffer vertexBuffers[] = {particle.GetBuffer()};
-                VkDeviceSize offsets[] = {0};
-                vkCmdBindVertexBuffers(ctx.commandBuffers[ctx.currentFrame], 0, 1, vertexBuffers, offsets);
+            if (!cameraPtr)
+                cameraPtr = &defaultCamera;
+            if (!camTransPtr)
+                camTransPtr = &defaultCamTrans;
 
-                vkCmdDraw(ctx.commandBuffers[ctx.currentFrame], PARTICLE_COUNT, 1, 0, 0);
-            });
+            // Draw Meshes
+            if (transforms && meshes)
+            {
+                // 1. Update Camera View/Projection UBO ONCE per frame
+                UpdateUniformBuffer(ctx, *cameraPtr, *camTransPtr);
 
-        vkCmdEndRenderPass(ctx.commandBuffers[ctx.currentFrame]);
+                Material errorMaterial = Material::CreateErrorMaterial(
+                    &ctx.graphics[0],
+                    ctx.descriptorSets[ctx.currentFrame]);
+
+                meshes->for_each(
+                    [&](Entity entity, const MeshRenderer &mesh)
+                    {
+                        const Transform *transform = transforms->get(entity);
+                        if (!transform)
+                            return;
+
+                        const Material *mat = mesh.GetMaterial();
+                        if (!mat || !mat->shader || mat->shader->pipeline == VK_NULL_HANDLE)
+                        {
+                            mat = &errorMaterial; // Draw as Magenta Error Mesh
+                        }
+
+                        // 2. Push per-object Model Matrix & Material Properties directly into Command Buffer
+                        MeshPushConstants push = mat->GetMeshPushConstants(transform->getMatrix());
+                        vkCmdPushConstants(
+                            ctx.commandBuffers[ctx.currentFrame],
+                            mat->shader->layout,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                            0, sizeof(MeshPushConstants),
+                            &push);
+
+                        // 3. Draw Geometry
+                        mesh.Draw(
+                            ctx.commandBuffers[ctx.currentFrame],
+                            mat->shader->layout,
+                            mat->shader->pipeline,
+                            mat->descriptorSet);
+                    });
+            }
+
+            // Draw Particles
+            particles.for_each_mut(
+                [&](Entity entity, ParticleSystem &particle)
+                {
+                    vkCmdBindPipeline(ctx.commandBuffers[ctx.currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.graphics[1].pipeline);
+                    vkCmdBindDescriptorSets(
+                        ctx.commandBuffers[ctx.currentFrame],
+                        VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        ctx.graphics[1].layout,
+                        0, 1,
+                        &ctx.descriptorSets[ctx.currentFrame],
+                        0, nullptr);
+
+                    VkBuffer vertexBuffers[] = {particle.GetBuffer()};
+                    VkDeviceSize offsets[] = {0};
+                    vkCmdBindVertexBuffers(ctx.commandBuffers[ctx.currentFrame], 0, 1, vertexBuffers, offsets);
+
+                    vkCmdDraw(ctx.commandBuffers[ctx.currentFrame], PARTICLE_COUNT, 1, 0, 0);
+                });
+
+            vkCmdEndRenderPass(ctx.commandBuffers[ctx.currentFrame]);
+        }
 
         // ============================================================
-        // PASS 2: Post-Processing to Swapchain
+        // PASS 2: Post-Processing + ImGui to Swapchain
         // ============================================================
         if (imageIndex >= ctx.swapchainFramebuffers.size())
         {
@@ -481,7 +486,7 @@ namespace OLIA_ENGINE
         swapchainInfo.framebuffer = ctx.swapchainFramebuffers[imageIndex];
         swapchainInfo.renderArea.extent = ctx.swapchainExtent;
 
-        VkClearValue swapchainClear{{{0.0f, 0.0f, 0.0f, 1.0f}}};
+        VkClearValue swapchainClear{{{0.047f, 0.055f, 0.078f, 1.0f}}};
         swapchainInfo.clearValueCount = 1;
         swapchainInfo.pClearValues = &swapchainClear;
 
@@ -489,11 +494,14 @@ namespace OLIA_ENGINE
         vkCmdSetViewport(ctx.commandBuffers[ctx.currentFrame], 0, 1, &viewport);
         vkCmdSetScissor(ctx.commandBuffers[ctx.currentFrame], 0, 1, &scissor);
 
-        vkCmdBindPipeline(ctx.commandBuffers[ctx.currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.postProcessPipeline.pipeline);
-        vkCmdBindDescriptorSets(ctx.commandBuffers[ctx.currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.postProcessPipeline.layout, 0, 1, &ctx.postProcessDescriptorSet, 0, nullptr);
+        if (hasScene)
+        {
+            vkCmdBindPipeline(ctx.commandBuffers[ctx.currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.postProcessPipeline.pipeline);
+            vkCmdBindDescriptorSets(ctx.commandBuffers[ctx.currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.postProcessPipeline.layout, 0, 1, &ctx.postProcessDescriptorSet, 0, nullptr);
 
-        // Draw full-screen triangle
-        vkCmdDraw(ctx.commandBuffers[ctx.currentFrame], 3, 1, 0, 0);
+            // Draw full-screen triangle
+            vkCmdDraw(ctx.commandBuffers[ctx.currentFrame], 3, 1, 0, 0);
+        }
 
         // ------------------------------------------------------------
         // RENDER IMGUI UI HERE
@@ -515,7 +523,7 @@ namespace OLIA_ENGINE
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &ctx.commandBuffers[ctx.currentFrame];
 
-        VkSemaphore signalSemaphores[] = {ctx.renderFinishedSemaphores[ctx.currentFrame]};
+        VkSemaphore signalSemaphores[] = {ctx.renderFinishedSemaphores[imageIndex]};
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -582,6 +590,20 @@ namespace OLIA_ENGINE
         if (!CreateSwapchain(ctx, window) || !GetSwapchainImages(ctx))
             return false;
 
+        if (ctx.swapchainImages.size() != ctx.renderFinishedSemaphores.size())
+        {
+            for (auto sem : ctx.renderFinishedSemaphores)
+                if (sem)
+                    vkDestroySemaphore(ctx.device, sem, ctx.allocator.callbacks());
+            ctx.renderFinishedSemaphores.resize(ctx.swapchainImages.size(), VK_NULL_HANDLE);
+            VkSemaphoreCreateInfo semInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            for (size_t i = 0; i < ctx.renderFinishedSemaphores.size(); ++i)
+            {
+                if (vkCreateSemaphore(ctx.device, &semInfo, ctx.allocator.callbacks(), &ctx.renderFinishedSemaphores[i]) != VK_SUCCESS)
+                    return false;
+            }
+        }
+
         ctx.swapchainImageViews.resize(ctx.swapchainImages.size());
         for (size_t i = 0; i < ctx.swapchainImages.size(); i++)
             ctx.swapchainImageViews[i] = CreateImageView(ctx.device, ctx.swapchainImages[i], ctx.swapchainFormat, VK_IMAGE_ASPECT_COLOR_BIT, ctx.allocator.callbacks());
@@ -603,6 +625,22 @@ namespace OLIA_ENGINE
     {
         if (ctx.device != VK_NULL_HANDLE)
             vkDeviceWaitIdle(ctx.device);
+
+        // ---------------------------------------------------------
+        // Cleanup UI Textures before ImGui shutdown
+        // ---------------------------------------------------------
+        for (auto &tex : ctx.uiTextures)
+        {
+            if (tex.descriptorSet != VK_NULL_HANDLE)
+                ImGui_ImplVulkan_RemoveTexture(tex.descriptorSet);
+            if (tex.imageView != VK_NULL_HANDLE)
+                vkDestroyImageView(ctx.device, tex.imageView, ctx.allocator.callbacks());
+            if (tex.image != VK_NULL_HANDLE)
+                vkDestroyImage(ctx.device, tex.image, ctx.allocator.callbacks());
+            if (tex.memory != VK_NULL_HANDLE)
+                vkFreeMemory(ctx.device, tex.memory, ctx.allocator.callbacks());
+        }
+        ctx.uiTextures.clear();
 
         // ---------------------------------------------------------
         // Shutdown ImGui
@@ -657,9 +695,13 @@ namespace OLIA_ENGINE
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
             vkFreeCommandBuffers(ctx.device, ctx.commandPool, 1, &ctx.commandBuffers[i]);
-            vkDestroySemaphore(ctx.device, ctx.renderFinishedSemaphores[i], ctx.allocator.callbacks());
             vkDestroySemaphore(ctx.device, ctx.imageAvailableSemaphores[i], ctx.allocator.callbacks());
             vkDestroyFence(ctx.device, ctx.inFlightFences[i], ctx.allocator.callbacks());
+        }
+        for (auto sem : ctx.renderFinishedSemaphores)
+        {
+            if (sem)
+                vkDestroySemaphore(ctx.device, sem, ctx.allocator.callbacks());
         }
 
         if (ctx.commandPool)
@@ -690,12 +732,15 @@ namespace OLIA_ENGINE
 
     bool CreateInstance(VKContext &ctx)
     {
-        bool enableValidationLayers = checkValidationLayerSupport();
-
-        if (!enableValidationLayers)
+        bool enableValidationLayers = false;
+#if !defined(NDEBUG)
+        enableValidationLayers = checkValidationLayerSupport();
+#else
+        if (std::getenv("OLIA_VK_VALIDATION") != nullptr)
         {
-            std::printf("Warning: Vulkan validation layers are not available.\n");
+            enableValidationLayers = checkValidationLayerSupport();
         }
+#endif
 
         uint32_t instanceExtensionCount = 0;
         const char *const *instanceExtensions = SDL_Vulkan_GetInstanceExtensions(&instanceExtensionCount);

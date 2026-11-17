@@ -84,18 +84,23 @@ namespace OLIA_ENGINE
     }
 
     VkPresentModeKHR ChoosePresentMode(
-        const std::vector<VkPresentModeKHR> &modes)
+        const std::vector<VkPresentModeKHR> &modes,
+        bool vsync)
     {
+        if (vsync)
+        {
+            // FIFO is VSync and guaranteed to exist without burning idle GPU.
+            return VK_PRESENT_MODE_FIFO_KHR;
+        }
+
         for (const auto &mode : modes)
         {
-            if (mode ==
-                VK_PRESENT_MODE_MAILBOX_KHR)
+            if (mode == VK_PRESENT_MODE_MAILBOX_KHR)
             {
                 return mode;
             }
         }
 
-        // FIFO is guaranteed to exist.
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
@@ -172,7 +177,8 @@ namespace OLIA_ENGINE
 
         VkPresentModeKHR presentMode =
             ChoosePresentMode(
-                support.presentModes);
+                support.presentModes,
+                ctx.vsync);
 
         // ------------------------------------------------------------
         // Choose extent

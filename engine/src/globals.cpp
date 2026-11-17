@@ -61,7 +61,13 @@ namespace OLIA_ENGINE
             return false;
         }
 
+        if (desc.resizable && desc.minWidth > 0 && desc.minHeight > 0)
+        {
+            SDL_SetWindowMinimumSize(m_window, static_cast<int>(desc.minWidth), static_cast<int>(desc.minHeight));
+        }
+
         // 2. Load PNG using stb_image (forces 4 channels / RGBA)
+        stbi_set_flip_vertically_on_load(false);
         int width = 0, height = 0, channels = 0;
         unsigned char *pixels = stbi_load("assets/icon.png", &width, &height, &channels, 4);
 
@@ -90,7 +96,38 @@ namespace OLIA_ENGINE
         }
 
         m_running = true;
+        m_focused = true;
+        m_lastActivityTick = SDL_GetTicks();
         return true;
+    }
+
+    void Platform::MarkActivity()
+    {
+        m_lastActivityTick = SDL_GetTicks();
+    }
+
+    void Platform::WaitIfIdle(bool hasActiveWork, bool powerSavingEnabled)
+    {
+        if (!powerSavingEnabled || hasActiveWork || m_dropHovering)
+            return;
+
+        uint64_t now = SDL_GetTicks();
+        uint64_t idleMs = (now >= m_lastActivityTick) ? (now - m_lastActivityTick) : 0;
+
+        if (!m_focused)
+        {
+            if (SDL_WaitEventTimeout(nullptr, 80))
+            {
+                m_lastActivityTick = SDL_GetTicks();
+            }
+        }
+        else if (idleMs > 1500)
+        {
+            if (SDL_WaitEventTimeout(nullptr, 33))
+            {
+                m_lastActivityTick = SDL_GetTicks();
+            }
+        }
     }
 
     void Platform::PollEvents()
@@ -107,8 +144,53 @@ namespace OLIA_ENGINE
                 m_running = false;
                 break;
 
+            case SDL_EVENT_WINDOW_FOCUS_GAINED:
+                m_focused = true;
+                m_lastActivityTick = SDL_GetTicks();
+                break;
+
+            case SDL_EVENT_WINDOW_FOCUS_LOST:
+                m_focused = false;
+                m_dropHovering = false;
+                break;
+
+            case SDL_EVENT_MOUSE_MOTION:
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+            case SDL_EVENT_MOUSE_WHEEL:
+            case SDL_EVENT_KEY_DOWN:
+            case SDL_EVENT_KEY_UP:
+            case SDL_EVENT_TEXT_INPUT:
+                m_lastActivityTick = SDL_GetTicks();
+                break;
+
+            case SDL_EVENT_DROP_BEGIN:
+                m_dropHovering = true;
+                m_lastActivityTick = SDL_GetTicks();
+                break;
+
+            case SDL_EVENT_DROP_POSITION:
+                m_dropHovering = true;
+                m_lastActivityTick = SDL_GetTicks();
+                break;
+
+            case SDL_EVENT_DROP_FILE:
+                if (event.drop.data && event.drop.data[0] != '\0')
+                {
+                    m_droppedFiles.emplace_back(event.drop.data);
+                }
+                m_dropHovering = false;
+                m_lastActivityTick = SDL_GetTicks();
+                break;
+
+            case SDL_EVENT_DROP_COMPLETE:
+                m_dropHovering = false;
+                m_lastActivityTick = SDL_GetTicks();
+                break;
+
             case SDL_EVENT_WINDOW_RESIZED:
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                m_lastActivityTick = SDL_GetTicks();
                 if (g_engine_context)
                 {
                     g_engine_context->vk_ctx.resized = true;

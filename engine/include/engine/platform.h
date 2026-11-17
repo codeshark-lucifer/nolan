@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace OLIA_ENGINE
 {
@@ -10,6 +12,8 @@ namespace OLIA_ENGINE
     {
         uint32_t width = 956;
         uint32_t height = 540;
+        uint32_t minWidth = 1024;
+        uint32_t minHeight = 640;
 
         const char *app_name = "olia";
         
@@ -30,11 +34,23 @@ namespace OLIA_ENGINE
         void Shutdown();
 
         void PollEvents();
+        void WaitIfIdle(bool hasActiveWork, bool powerSavingEnabled);
+        void MarkActivity();
 
         bool IsRunning()
         {
             this->PollEvents();
             return m_running;
+        }
+
+        bool IsFocused() const { return m_focused; }
+        bool IsDropHovering() const { return m_dropHovering; }
+
+        std::vector<std::string> ConsumeDroppedFiles()
+        {
+            std::vector<std::string> files;
+            files.swap(m_droppedFiles);
+            return files;
         }
 
         SDL_Window *GetWindow() const
@@ -45,6 +61,10 @@ namespace OLIA_ENGINE
     private:
         SDL_Window *m_window = nullptr;
         bool m_running = false;
+        bool m_focused = true;
+        bool m_dropHovering = false;
+        uint64_t m_lastActivityTick = 0;
+        std::vector<std::string> m_droppedFiles;
     };
 
 } // namespace OLIA_ENGINE

@@ -21,6 +21,9 @@ target_include_directories(application
 target_link_libraries(application
     PRIVATE
         olia
+        MINIZIP::minizip
+        comdlg32
+        ole32
 )
 
 add_custom_command(TARGET application POST_BUILD
@@ -28,6 +31,17 @@ add_custom_command(TARGET application POST_BUILD
         $<TARGET_FILE:olia>
         $<TARGET_FILE_DIR:application>
 )
+
+if(TARGET minizip)
+    get_target_property(_MINIZIP_TYPE minizip TYPE)
+    if(_MINIZIP_TYPE STREQUAL "SHARED_LIBRARY")
+        add_custom_command(TARGET application POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:minizip>
+                $<TARGET_FILE_DIR:application>
+        )
+    endif()
+endif()
 
 # Windows
 if(WIN32)

@@ -54,6 +54,17 @@ namespace OLIA_ENGINE
         VkSampler textureSampler = VK_NULL_HANDLE;
     };
 
+    struct UITextureRecord
+    {
+        uint64_t id = 0;
+        int width = 0;
+        int height = 0;
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImageView imageView = VK_NULL_HANDLE;
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    };
+
     struct VKContext
     {
         // --- Core Handles ---
@@ -117,6 +128,7 @@ namespace OLIA_ENGINE
 
         Allocator allocator;
         bool resized = false;
+        bool vsync = true;
         uint32_t currentFrame = 0;
 
         UniformBuffers uniforms;
@@ -125,6 +137,7 @@ namespace OLIA_ENGINE
         std::vector<VkDescriptorSet> descriptorSets;
 
         VkDescriptorPool imguiPool = VK_NULL_HANDLE;
+        std::vector<UITextureRecord> uiTextures;
     };
 
     bool CreateInstance(VKContext &ctx);
